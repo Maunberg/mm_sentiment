@@ -8,8 +8,8 @@ from ctc_forced_aligner import AlignmentTorch
 import json
 from pydub import AudioSegment
 
-name = '/home/dutov@ad.speechpro.com/work/course/' + 'Data_Train_modified.csv'
-name_save = '/home/dutov@ad.speechpro.com/work/course/mm_sentiment/ex_data/' + 'train.json'
+name = '/home/dutov@ad.speechpro.com/work/course/' + 'Data_Val_modified.csv'
+name_save = '/home/dutov@ad.speechpro.com/work/course/mm_sentiment/ex_data/' + 'val.json'
 
 dataset = pd.read_csv(name)
 

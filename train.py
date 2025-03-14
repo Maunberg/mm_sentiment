@@ -22,17 +22,27 @@ import pickle
 from IPython.display import FileLink
 
 ex_dir = '/home/dutov@ad.speechpro.com/work/course/mm_sentiment/'
-features_file = 'ex/'+'features_w2_o0.5.pickle'
-targets_file = 'ex/'+'targets_w2_o0.5.pickle'
+window = 2
+overlap = 0.5
+features_train_file = 'ex/'+f'features_train_w{window}_o{overlap}.pickle'
+targets_train_file = 'ex/'+f'targets_train_w{window}_o{overlap}.pickle'
+features_test_file = 'ex/'+f'features_test_w{window}_o{overlap}.pickle'
+targets_test_file = 'ex/'+f'targets_test_w{window}_o{overlap}.pickle'
 mode = 'spectr' #mfcc #mel #spectr
 num_epochs = 50
 name_model = f'models/test_{mode}_{num_epochs}.chkp'
 
-with open(ex_dir+'/'+features_file, 'rb') as f:
-    features = pickle.load(f)
+with open(ex_dir+'/'+features_train_file, 'rb') as f:
+    features_train = pickle.load(f)
 
-with open(ex_dir+'/'+targets_file, 'rb') as f:
-    targets = pickle.load(f)
+with open(ex_dir+'/'+features_test_file, 'rb') as f:
+    features_test = pickle.load(f)
+
+with open(ex_dir+'/'+targets_train_file, 'rb') as f:
+    targets_train = pickle.load(f)
+
+with open(ex_dir+'/'+targets_test_file, 'rb') as f:
+    targets_test = pickle.load(f)
 
 def set_seed(random_rate=42):
     random.seed(random_rate)
@@ -54,8 +64,13 @@ class model_register():
         self.results = {}
         self.epoch = 0
         
-    def gen_datasets(self, mode='spectr'):
-        X_train, X_test, y_train, y_test = train_test_split(features[mode], pd.DataFrame(targets).to_numpy(), test_size=0.2, random_state=0)
+	#features_train, features_test, targets_train, targets_test
+    def gen_datasets(self, X_train, X_test, y_train, y_test,  mode='spectr'):
+        #X_train, X_test, y_train, y_test = train_test_split(features[mode], pd.DataFrame(targets).to_numpy(), test_size=0.2, random_state=0)
+        X_train = X_train[mode]
+        X_test = X_test[mode]
+        y_train = pd.DataFrame(y_train).to_numpy()
+        y_test = pd.DataFrame(y_test).to_numpy()
         inputs_train = torch.tensor(X_train, dtype=torch.float32).to(self.device)
         targets_train_emo = torch.tensor([i[:-1] for i in y_train], dtype=torch.long)
         targets_train_sent = torch.tensor([i[-1] for i in y_train], dtype=torch.long)
@@ -136,9 +151,8 @@ class model_register():
         predictions_sent_upd = []
         targets_sent_upd = []
         for h, t in zip(predictions_sent, targets_sent):
-            if t != 0 or count_zero:
-                predictions_sent_upd.append(h)
-                targets_sent_upd.append(t)
+            predictions_sent_upd.append(h)
+            targets_sent_upd.append(t)
         predictions_sent = predictions_sent_upd
         targets_sent = targets_sent_upd
     
@@ -209,7 +223,7 @@ class Classifier(nn.Module):
         return emo_out, sent_out
 
 model = model_register()
-model.gen_datasets(mode)
+model.gen_datasets(features_train, features_test, targets_train, targets_test, mode=mode)
 model.get_model()
 model.train(num_epochs, testing=False)
 model.test(to_print=True, epoch='-', count_zero=False)
