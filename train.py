@@ -1,5 +1,6 @@
 import pandas as pd
 import os
+from collections import Counter
 import numpy as np
 import matplotlib.pyplot as plt
 from IPython.display import Audio
@@ -22,14 +23,14 @@ import pickle
 from IPython.display import FileLink
 
 ex_dir = '/home/dutov@ad.speechpro.com/work/course/mm_sentiment/'
-window = 2
-overlap = 0.5
+window = 1
+overlap = 0
 features_train_file = 'ex/'+f'features_train_w{window}_o{overlap}.pickle'
 targets_train_file = 'ex/'+f'targets_train_w{window}_o{overlap}.pickle'
 features_test_file = 'ex/'+f'features_test_w{window}_o{overlap}.pickle'
 targets_test_file = 'ex/'+f'targets_test_w{window}_o{overlap}.pickle'
 mode = 'spectr' #mfcc #mel #spectr
-num_epochs = 50
+num_epochs = 5
 name_model = f'models/test_{mode}_{num_epochs}.chkp'
 
 with open(ex_dir+'/'+features_train_file, 'rb') as f:
@@ -68,21 +69,41 @@ class model_register():
     def gen_datasets(self, X_train, X_test, y_train, y_test,  mode='spectr'):
         #X_train, X_test, y_train, y_test = train_test_split(features[mode], pd.DataFrame(targets).to_numpy(), test_size=0.2, random_state=0)
         X_train = X_train[mode]
+        train_id = np.array([int(i.split('|')[0]) for i in pd.DataFrame(y_train)['id'].to_list()]).astype(np.int64)
+        y_train = pd.DataFrame(y_train)[['happy', 'sad', 'anger', 'surprise', 'disgust', 'fear', 'sentiment']].to_numpy()
+        
         X_test = X_test[mode]
-        y_train = pd.DataFrame(y_train).to_numpy()
-        y_test = pd.DataFrame(y_test).to_numpy()
+        test_id = np.array([int(i.split('|')[0]) for i in pd.DataFrame(y_test)['id'].to_list()]).astype(np.int64)
+        y_test = pd.DataFrame(y_test)[['happy', 'sad', 'anger', 'surprise', 'disgust', 'fear', 'sentiment']].to_numpy()
+        
         inputs_train = torch.tensor(X_train, dtype=torch.float32).to(self.device)
         targets_train_emo = torch.tensor([i[:-1] for i in y_train], dtype=torch.long)
         targets_train_sent = torch.tensor([i[-1] for i in y_train], dtype=torch.long)
+        train_id = torch.tensor(train_id, dtype=torch.long)
+        
         inputs_test = torch.tensor(X_test, dtype=torch.float32)
         targets_test_emo = torch.tensor([i[:-1] for i in y_test], dtype=torch.long)
         targets_test_sent = torch.tensor([i[-1] for i in y_test], dtype=torch.long)
+        test_id = torch.tensor(test_id, dtype=torch.long)
+        
         self.input_dim = inputs_train.shape[1:]
         self.input_dim = torch.prod(torch.tensor(model.input_dim))
+        
         inputs_train = inputs_train.view(inputs_train.shape[0], self.input_dim)
         inputs_test = inputs_test.view(inputs_test.shape[0], self.input_dim)
-        train = data_utils.TensorDataset(inputs_train.to(self.device), targets_train_emo.to(self.device), targets_train_sent.to(self.device))
-        test = data_utils.TensorDataset(inputs_test.to(self.device), targets_test_emo.to(self.device), targets_test_sent.to(self.device))
+        
+        train = data_utils.TensorDataset(
+                                     inputs_train.to(self.device), 
+                                     targets_train_emo.to(self.device), 
+                                     targets_train_sent.to(self.device),
+                                     train_id.to(self.device)
+                                     )
+        test = data_utils.TensorDataset(
+                                     inputs_test.to(self.device), 
+                                     targets_test_emo.to(self.device), 
+                                     targets_test_sent.to(self.device),
+                                     test_id.to(self.device)
+                                     )
         
         self.trainset = torch.utils.data.DataLoader(train, batch_size=self.batch_size, shuffle=True)
         self.testset = torch.utils.data.DataLoader(test, batch_size=self.batch_size, shuffle=False)
@@ -90,12 +111,34 @@ class model_register():
     def get_model(self):
         self.model = Classifier(self.input_dim).to(self.device)
         self.optimizer = optim.Adam(self.model.parameters(), lr=self.lr)
+    
+    def agrigation(self, emo_set, sent=False):
+        if len(emo_set) == 0:
+            return []
+        count = Counter(emo_set)
+        max_freq = max(count.values())
+        most_common_nums = [num for num, freq in count.items() if freq == max_freq]
+        if sent:
+            if 2 in most_common_nums:
+                return 2
+            elif 3 in most_common_nums:
+                return 3
+            elif 4 in most_common_nums:
+                return 4
+            elif 1 in most_common_nums:
+                return 1
+            elif 0 in most_common_nums:
+                return 0
+            else:
+                return most_common_nums[0]
+            
+        return min(most_common_nums)
 
     def train(self, epochs=10, testing=True, count_zero=False):
         for epoch in range(epochs):
             
             with tqdm(self.trainset, desc=f"Epoch {epoch+1}/{epochs}", leave=True) as pbar:
-                for X, y_emo, y_sent in pbar: 
+                for X, y_emo, y_sent, id_list in pbar: 
                     X, y_emo, y_sent = X, y_emo, y_sent
                     self.optimizer.zero_grad()
                     emo_out, sent_out = self.model(X)
@@ -121,8 +164,8 @@ class model_register():
         
         with torch.no_grad():
             with tqdm(self.testset, desc="Testing", leave=True) as pbar:
-                for X, y_emo, y_sent in pbar:
-                    X, y_emo, y_sent = X.to(self.device), y_emo.cpu(), y_sent.cpu()
+                for X, y_emo, y_sent, id_list in pbar:
+                    X, y_emo, y_sent, id_list = X.to(self.device), y_emo.cpu(), y_sent.cpu(), id_list.cpu()
     
                     emo_out, sent_out = self.model(X)
                     
@@ -141,21 +184,56 @@ class model_register():
         targets_per_emo = {emo: [] for emo in emos}
     
         # Обрабатываем эмоции
-        for h, t in zip(predictions_emo, targets_emo):
-            for i, emo in enumerate(emos):
-                if t[i] != 0 or count_zero:  # исключаем метку 0, если count_zero=False
-                    predictions_per_emo[emo].append(h[i])
-                    targets_per_emo[emo].append(t[i])
+        i_last = None
+        for h, t, i in zip(predictions_emo, targets_emo, id_list):
+            if i_last == None:
+                i_last = i
+                sub_pred_per_emo = []
+                sub_targ_per_emo = []
+            elif i_last != i:
+                print(i)
+                predictions_per_emo[emo].append(self.agrigation(sub_pred_per_emo))
+                targets_per_emo[emo].append(self.agrigation(sub_targ_per_emo))
+                sub_pred_per_emo = []
+                sub_targ_per_emo = []
+            for n, emo in enumerate(emos):
+                if t[n] != 0 or count_zero:  # исключаем метку 0, если count_zero=False
+                    sub_pred_per_emo.append(h[n])
+                    sub_targ_per_emo.append(t[n])
+            i_last = i
+        predictions_per_emo[emo].append(self.agrigation(sub_pred_per_emo))
+        targets_per_emo[emo].append(self.agrigation(sub_targ_per_emo))
     
         # Обрабатываем сентимент
         predictions_sent_upd = []
         targets_sent_upd = []
-        for h, t in zip(predictions_sent, targets_sent):
-            predictions_sent_upd.append(h)
-            targets_sent_upd.append(t)
+        i_last = None
+        for h, t, i in zip(predictions_sent, targets_sent, id_list):
+            if i_last == None:
+                i_last = i
+                sub_pred_sent = []
+                sub_targ_sent = []
+            elif i_last != i:
+                predictions_sent_upd.append(self.agrigation(sub_pred_sent, sent=True))
+                targets_sent_upd.append(self.agrigation(sub_targ_sent, sent=True))
+                sub_pred_sent = []
+                sub_targ_sent = []
+            sub_pred_sent.append(h)
+            sub_targ_sent.append(t)
+            i_last = i
+        predictions_sent_upd.append(self.agrigation(sub_pred_sent, sent=True))
+        targets_sent_upd.append(self.agrigation(sub_targ_sent, sent=True))
         predictions_sent = predictions_sent_upd
         targets_sent = targets_sent_upd
-    
+
+        print('\n'*3)
+        print(targets_per_emo[emos[0]][:10])
+        print(predictions_per_emo[emos[0]][:10])
+        print('___')
+        print(targets_sent[:10])
+        print(predictions_sent[:10])
+        
+        print('SENT:', len(predictions_sent), len(targets_sent))
         text = ''
         # F1-Score для эмоций и сентимента
         for emo in emos:
@@ -226,7 +304,7 @@ model = model_register()
 model.gen_datasets(features_train, features_test, targets_train, targets_test, mode=mode)
 model.get_model()
 model.train(num_epochs, testing=False)
-model.test(to_print=True, epoch='-', count_zero=False)
+model.test(to_print=True, epoch='-', count_zero=True)
 with open(name_model.replace('chkp', 'metrics'), 'w') as f:
     f.write(model.text)
 

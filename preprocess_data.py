@@ -10,14 +10,16 @@ import os
 input_dir = '/home/dutov@ad.speechpro.com/work/course/'
 train = '/home/dutov@ad.speechpro.com/work/course/Data_Train_modified.csv'
 test = '/home/dutov@ad.speechpro.com/work/course/Data_Test_original.csv'
-window = 2
+window = 1
 overlap = 0
 
-def process_data(input_file, window, input_dir='/home/dutov@ad.speechpro.com/work/course/', overlap=0, mode=['spectr', 'mel', 'mfcc']):
+def process_data(input_file, window, input_dir='/home/dutov@ad.speechpro.com/work/course/', overlap=0, mode=['spectr', 'mel', 'mfcc'], ):
     print('Loading...')
     
     df = pd.read_csv(input_file)
     df['len_time'] = df['end_time'] - df['start_time']
+    df['id'] = df.index
+    df['id'] = df['id'].astype(str)
     
     def split_intervals(row, window=3, overlap=1.5):
         segments = []
@@ -57,6 +59,7 @@ def process_data(input_file, window, input_dir='/home/dutov@ad.speechpro.com/wor
     agg_columns = ['sentiment', 'happy', 'sad', 'anger', 'surprise', 'disgust', 'fear']
     df_expanded = df_expanded.groupby(['video', 'start_time'], as_index=False).agg({
         **{col: 'mean' for col in agg_columns},
+        'id':'|'.join,
         'ASR': ' '.join,
         'text': ' '.join,
         'end_time': 'max',
@@ -122,6 +125,7 @@ def process_data(input_file, window, input_dir='/home/dutov@ad.speechpro.com/wor
                 'disgust':data['disgust'],
                 'fear':data['fear'],
                 'sentiment':data['sentiment_classes'],
+                'id':data['id']
             })
     
     n = 0
@@ -135,7 +139,7 @@ def process_data(input_file, window, input_dir='/home/dutov@ad.speechpro.com/wor
     features = {}
     for feat in mode:
         features[feat] = []
-    target = {'happy':[], 'sad':[], 'anger':[], 'surprise':[],'disgust':[], 'fear':[], 'sentiment':[]}
+    target = {'happy':[], 'sad':[], 'anger':[], 'surprise':[],'disgust':[], 'fear':[], 'sentiment':[], 'id':[]}
     for audio in tqdm(sorted(full_info.keys())[0:]):
         path = input_dir+'/Audio/Audio/WAV_16000/'+audio+'.wav'
         audio_get, file_sr = sf.read(path)
@@ -146,6 +150,7 @@ def process_data(input_file, window, input_dir='/home/dutov@ad.speechpro.com/wor
             if len(curr_audio) == 16000*window:
                 for f in ['sentiment', 'happy', 'sad', 'anger', 'surprise', 'disgust', 'fear']:
                     target[f].append(sample[f])
+                target['id'].append(sample['id'])
                 n_fft = min(2048, len(curr_audio))
                 # print(len(curr_audio))
                 if 'spectr' in mode:
