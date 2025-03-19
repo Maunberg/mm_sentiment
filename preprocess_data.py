@@ -10,8 +10,8 @@ import os
 input_dir = '/home/dutov@ad.speechpro.com/work/course/'
 train = '/home/dutov@ad.speechpro.com/work/course/Data_Train_modified.csv'
 test = '/home/dutov@ad.speechpro.com/work/course/Data_Test_original.csv'
-window = 1
-overlap = 0
+window = 2
+overlap = 0.5
 
 def process_data(input_file, window, input_dir='/home/dutov@ad.speechpro.com/work/course/', overlap=0, mode=['spectr', 'mel', 'mfcc'], ):
     print('Loading...')
