@@ -169,7 +169,12 @@ class model_register():
         for emo in emos:
             predictions_per_emo[emo].append(self.agrigation(sub_pred_per_emo[emo]))
             targets_per_emo[emo].append(self.agrigation(sub_targ_per_emo[emo]))
-    
+        for emo in emos:
+            print('EMO:', emo)
+            print('Was dist: ', dict(sorted(Counter(predictions_per_emo[emo]).items())))
+            print('Dist emo: ', dict(sorted(Counter(predictions_per_emo[emo]).items())))
+            print('Target d: ', dict(sorted(Counter(targets_per_emo[emo]).items())))
+
         predictions_sent_upd = []
         targets_sent_upd = []
         i_last = None
@@ -188,13 +193,18 @@ class model_register():
             i_last = i
         predictions_sent_upd.append(self.agrigation(sub_pred_sent, sent=True))
         targets_sent_upd.append(self.agrigation(sub_targ_sent, sent=True))
+        print('SENT')
+        print('Was dist: ', dict(sorted(Counter(predictions_sent).items())))
+        print('Dist emo: ', dict(sorted(Counter(predictions_sent_upd).items())))
+        print('Target d: ', dict(sorted(Counter(targets_sent_upd).items())))
         predictions_sent = predictions_sent_upd
         targets_sent = targets_sent_upd
         text = ''
         # F1-Score 
         mean_f1 = []
         for emo in emos:
-            f1_value = round(f1_score(targets_per_emo[emo], predictions_per_emo[emo], average="micro", zero_division=0) * 100, 2)
+            f1_value = round(f1_score(targets_per_emo[emo], predictions_per_emo[emo], 
+                                      average="micro", zero_division=0, labels=[1, 2, 3]) * 100, 2)
             mean_f1.append(f1_value)
             self.results[epoch][emo.capitalize()] = {'f1_score': f1_value}
             if to_print:
@@ -207,7 +217,8 @@ class model_register():
             print(stext)
             text += '\n' + stext
         
-        f1_sentiment = round(f1_score(targets_sent, predictions_sent, average="micro", zero_division=0) * 100, 2)
+        f1_sentiment = round(f1_score(targets_sent, predictions_sent, average="micro", 
+                                      zero_division=0, labels=[1, 2, 3]) * 100, 2)
         self.results[epoch]['Sentiment'] = {'f1_score': f1_sentiment}
         if to_print:
             stext = f'F1 Sentiment   : {f1_sentiment}'

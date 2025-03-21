@@ -31,9 +31,9 @@ version = 'T' #FNN #T
 overlap = 0
 overlap_test = 0
 mode = 'mfcc' #mfcc #mel #spectr
-train = True
-load_model = False
-num_epochs = 100
+train = False
+load_model = True
+num_epochs = 50
 
 
 features_train_file = 'ex/'+f'features_train_w{window}_o{overlap}.pickle'
