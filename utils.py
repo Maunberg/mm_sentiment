@@ -20,13 +20,14 @@ import torch.optim as optim
 import random
 from tqdm import tqdm
 import pickle
+from transformers import BertModel, BertTokenizer
 from IPython.display import FileLink
 
 class model_register():
     def __init__(self, ):
-        self.batch_size = 64
+        self.batch_size = 50 #1024
         self.loss_function = nn.CrossEntropyLoss()
-        self.lr = 1e-5
+        self.lr = 1e-3
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         self.results = {}
         self.epoch = 0
@@ -41,8 +42,13 @@ class model_register():
         X_test = X_test[mode]
         test_id = np.array([int(i.split('|')[0]) for i in pd.DataFrame(y_test)['id'].to_list()]).astype(np.int64)
         y_test = pd.DataFrame(y_test)[['happy', 'sad', 'anger', 'surprise', 'disgust', 'fear', 'sentiment']].to_numpy()
-        
+        y_test = np.nan_to_num(y_test, nan=0)
+        y_train = np.nan_to_num(y_train, nan=0)
+        X_train = np.nan_to_num(X_train, nan=0)
+        X_test = np.nan_to_num(X_test, nan=0)
+
         inputs_train = torch.tensor(X_train, dtype=torch.float32).to(self.device)
+
         targets_train_emo = torch.tensor([i[:-1] for i in y_train], dtype=torch.long)
         targets_train_sent = torch.tensor([i[-1] for i in y_train], dtype=torch.long)
         train_id = torch.tensor(train_id, dtype=torch.long)
@@ -74,9 +80,13 @@ class model_register():
         self.trainset = torch.utils.data.DataLoader(train, batch_size=self.batch_size, shuffle=True)
         self.testset = torch.utils.data.DataLoader(test, batch_size=self.batch_size, shuffle=False)
 
-    def get_model(self, Classifier):
-        self.model = Classifier(self.input_dim).to(self.device)
+    def get_model(self, Classifier, addition=None, mode='standart'):
+        if mode=='standart':
+            self.model = Classifier(self.input_dim, num_emo_classes=2, num_sent_classes=3).to(self.device)
+        elif mode == 'add':
+            self.model = Classifier(addition, num_emo_classes=2, num_sent_classes=3).to(self.device)
         self.optimizer = optim.Adam(self.model.parameters(), lr=self.lr)
+        self.scheduler = torch.optim.lr_scheduler.StepLR(self.optimizer, step_size=5, gamma=0.1)
     
     def agrigation(self, emo_set, sent=False):
         if len(emo_set) == 0:
@@ -100,12 +110,15 @@ class model_register():
             
         return min(most_common_nums)
 
-    def train(self, epochs=10, testing=True, count_zero=False):
+    def train(self, epochs=10, testing=True, count_zero=False, tensor_type='float'):
         for epoch in range(epochs):
             
             with tqdm(self.trainset, desc=f"Epoch {epoch+1}/{epochs}", leave=True) as pbar:
-                for X, y_emo, y_sent, id_list in pbar: 
+                for X, y_emo, y_sent, id_list in pbar:
                     X, y_emo, y_sent = X, y_emo, y_sent
+                    if tensor_type == 'long':
+                        X = X.long()
+
                     self.optimizer.zero_grad()
                     emo_out, sent_out = self.model(X)
                     emo_out = emo_out.view(-1, emo_out.shape[-1])
@@ -118,22 +131,27 @@ class model_register():
                     self.optimizer.step()
                     
                     pbar.set_postfix(loss=loss.item(), loss_emo=loss_emo.item(), loss_sent=loss_sent.item())
+            self.scheduler.step()
             self.epoch += 1
             if testing:
-                self.test(to_print=False, epoch=self.epoch, count_zero=count_zero)
+                self.test(to_print=False, epoch=self.epoch, count_zero=count_zero, tensor_type=tensor_type)
 
-    def test(self, to_print=True, epoch='-', count_zero=True):
+    def test(self, to_print=True, epoch='-', count_zero=True, tensor_type='float'):
         self.model.eval()
         predictions_emo, targets_emo = [], []
         predictions_sent, targets_sent = [], []
         ids_list = []
         self.results[epoch] = {}
+        if count_zero == True:
+            labels_list = [0, 1, 2, 3]
+        else:
+            labels_list = [1, 2, 3]
         
         with torch.no_grad():
             with tqdm(self.testset, desc="Testing", leave=True) as pbar:
                 for X, y_emo, y_sent, id_list in pbar:
                     X, y_emo, y_sent, id_list = X.to(self.device), y_emo.cpu(), y_sent.cpu(), id_list.cpu()
-    
+
                     emo_out, sent_out = self.model(X)
                     
                     preds_emo = torch.argmax(emo_out, dim=-1).cpu().numpy()
@@ -204,7 +222,7 @@ class model_register():
         mean_f1 = []
         for emo in emos:
             f1_value = round(f1_score(targets_per_emo[emo], predictions_per_emo[emo], 
-                                      average="micro", zero_division=0, labels=[1, 2, 3]) * 100, 2)
+                                      average="macro", zero_division=0, labels=labels_list) * 100, 2)
             mean_f1.append(f1_value)
             self.results[epoch][emo.capitalize()] = {'f1_score': f1_value}
             if to_print:
@@ -217,8 +235,8 @@ class model_register():
             print(stext)
             text += '\n' + stext
         
-        f1_sentiment = round(f1_score(targets_sent, predictions_sent, average="micro", 
-                                      zero_division=0, labels=[1, 2, 3]) * 100, 2)
+        f1_sentiment = round(f1_score(targets_sent, predictions_sent, average="macro", 
+                                      zero_division=0, labels=labels_list) * 100, 2)
         self.results[epoch]['Sentiment'] = {'f1_score': f1_sentiment}
         if to_print:
             stext = f'F1 Sentiment   : {f1_sentiment}'
@@ -299,6 +317,138 @@ class classifier_v1(nn.Module):
         x = F.relu(self.fc1(x))
 
         x = self.dropout(x)
+
+        emo_out = self.fc_emo(x).view(-1, self.num_emo, self.num_emo_classes)
+        sent_out = self.fc_sent(x)
+
+        return emo_out, sent_out
+
+class classifier_v1_token(nn.Module):
+    def __init__(self, input_dim, embedding_dim=128, hidden_dim=512, num_emo=6, num_emo_classes=4, num_sent_classes=5, dropout_rate=0.5):
+        super().__init__()
+        
+        self.embedding = nn.Embedding(input_dim, embedding_dim)
+        
+        hidden_dim = hidden_dim * 4
+
+        self.num_emo = num_emo
+        self.num_emo_classes = num_emo_classes
+
+        # Первый слой теперь - это слой эмбеддинга
+        self.fc1 = nn.Linear(embedding_dim, hidden_dim)
+        self.fc_emo = nn.Linear(hidden_dim, num_emo * num_emo_classes)
+        self.fc_sent = nn.Linear(hidden_dim, num_sent_classes)
+        self.dropout = nn.Dropout(dropout_rate)
+
+    def forward(self, x):
+        x = self.embedding(x)
+        
+        x = x.mean(dim=1)
+
+        x = F.relu(self.fc1(x))
+        x = self.dropout(x)
+
+        emo_out = self.fc_emo(x).view(-1, self.num_emo, self.num_emo_classes)
+        sent_out = self.fc_sent(x)
+
+        return emo_out, sent_out
+
+class classifier_v1_bert(nn.Module):
+    def __init__(self, bert_model_name, num_emo=6, num_emo_classes=4, num_sent_classes=5, dropout_rate=0.5):
+        super().__init__()
+        
+        self.bert = BertModel.from_pretrained(bert_model_name)
+        self.bert_output_dim = self.bert.config.hidden_size
+        
+        self.num_emo = num_emo
+        self.num_emo_classes = num_emo_classes
+
+        self.fc1 = nn.Linear(self.bert_output_dim, 512)
+        self.fc_emo = nn.Linear(512, num_emo * num_emo_classes)
+        self.fc_sent = nn.Linear(512, num_sent_classes)
+        self.dropout = nn.Dropout(dropout_rate)
+
+    def forward(self, x):
+        attention_mask = (x != 0).long()
+        x = x.long()
+        outputs = self.bert(x, attention_mask=attention_mask)
+        x = outputs.last_hidden_state
+        x = x.mean(dim=1) 
+        x = F.relu(self.fc1(x))
+        x = self.dropout(x)
+
+        emo_out = self.fc_emo(x).view(-1, self.num_emo, self.num_emo_classes)
+        sent_out = self.fc_sent(x)
+
+        return emo_out, sent_out
+
+
+class classifier_v2_token(nn.Module):
+    def __init__(self, input_dim, embedding_dim=128, hidden_dim=512, num_emo=6, num_emo_classes=4, num_sent_classes=5, dropout_rate=0.5):
+        super().__init__()
+
+        self.embedding = nn.Embedding(input_dim, embedding_dim)
+
+        hidden_dim = 128 #hidden_dim
+
+        self.num_emo = num_emo
+        self.num_emo_classes = num_emo_classes
+
+        self.fc1 = nn.Linear(embedding_dim, hidden_dim)
+        self.fc_emo = nn.Linear(hidden_dim, num_emo * num_emo_classes)
+        self.fc_sent = nn.Linear(hidden_dim, num_sent_classes)
+        self.dropout = nn.Dropout(dropout_rate)
+
+        self.transformer_layer = nn.TransformerEncoderLayer(d_model=hidden_dim, nhead=8)
+        self.transformer_encoder = nn.TransformerEncoder(self.transformer_layer, num_layers=1)
+
+    def forward(self, x):
+        x = x.long()
+        x = self.embedding(x)
+
+        x = x.permute(1, 0, 2)
+        x = self.transformer_encoder(x)
+        x = x.mean(dim=0)
+
+        x = F.relu(self.fc1(x))
+        x = self.dropout(x)
+
+        emo_out = self.fc_emo(x).view(-1, self.num_emo, self.num_emo_classes)
+        sent_out = self.fc_sent(x)
+
+        return emo_out, sent_out
+
+class classifier_v2_bert(nn.Module):
+    def __init__(self, bert_model_name, num_emo=6, num_emo_classes=4, num_sent_classes=5, dropout_rate=0.5):
+        super().__init__()
+
+        self.bert = BertModel.from_pretrained(bert_model_name)
+        self.bert_output_dim = self.bert.config.hidden_size
+
+        self.num_emo = num_emo
+        self.num_emo_classes = num_emo_classes
+
+        self.fc1 = nn.Linear(self.bert_output_dim, 512)
+        self.fc_emo = nn.Linear(512, num_emo * num_emo_classes)
+        self.fc_sent = nn.Linear(512, num_sent_classes)
+        self.dropout = nn.Dropout(dropout_rate)
+
+        self.transformer_layer = nn.TransformerEncoderLayer(d_model=512, nhead=8)
+        self.transformer_encoder = nn.TransformerEncoder(self.transformer_layer, num_layers=1)
+
+    def forward(self, x):
+        attention_mask = (x != 0).long()
+        x = x.long()
+        outputs = self.bert(x, attention_mask=attention_mask)
+        x = outputs.last_hidden_state
+        x = x.mean(dim=1)
+
+        x = F.relu(self.fc1(x))
+        x = self.dropout(x)
+
+        x = x.unsqueeze(1)
+        x = self.transformer_encoder(x)
+        x = x.squeeze(1)
 
         emo_out = self.fc_emo(x).view(-1, self.num_emo, self.num_emo_classes)
         sent_out = self.fc_sent(x)

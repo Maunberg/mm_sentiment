@@ -68,22 +68,14 @@ def process_data(input_file, window, input_dir='/home/dutov@ad.speechpro.com/wor
     
     def transform_sentiment(x):
         if x > 1:
-            return 4
-        elif x > 0:
-            return 3
-        elif x == 0:
             return 2
-        elif x < -1:
+        elif x == 0:
             return 1
         elif x < 0:
             return 0
-    
+
     def transform_emotion(x):
-        if x >= 2.5:
-            return 3
-        elif x >= 1.5:
-            return 2
-        elif x >= 0.5:
+        if x > 0:
             return 1
         else:
             return 0
