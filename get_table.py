@@ -5,7 +5,7 @@ data = {}
 voice_files = [i for i in files if i.count('_voice.metric')]
 text_files = [i for i in files if i.count('_text.metric')]
 image_files = [i for i in files if i.count('_image.metric')]
-mm_files = [i for i in files if i.count('_mm.metric')]
+mm_files = [i for i in files if i.count('_concated.metric')]
 
 def get_res(res, files, dir=dir):
     res = {'EMO_F1':[], 'EMO_RMSE':[], 'SENT_F1':[], 'SENT_RMSE':[]}
@@ -58,5 +58,12 @@ with open(dir+'/full_text.txt', 'w') as f:
 with open(dir+'/full_image.txt', 'w') as f:
     if image_files != []:
         r = get_res({}, image_files)
+        text = get_text_left(r)
+        f.write(text)
+
+
+with open(dir+'/full_mm.txt', 'w') as f:
+    if mm_files != []:
+        r = get_res({}, mm_files)
         text = get_text_left(r)
         f.write(text)

@@ -31,51 +31,97 @@ class model_register():
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         self.results = {}
         self.epoch = 0
+        self.has_to_features = False
         
 	#features_train, features_test, targets_train, targets_test
     def gen_datasets(self, X_train, X_test, y_train, y_test,  mode='spectr'):
         #X_train, X_test, y_train, y_test = train_test_split(features[mode], pd.DataFrame(targets).to_numpy(), test_size=0.2, random_state=0)
-        X_train = X_train[mode]
         train_id = np.array([int(i.split('|')[0]) for i in pd.DataFrame(y_train)['id'].to_list()]).astype(np.int64)
         y_train = pd.DataFrame(y_train)[['happy', 'sad', 'anger', 'surprise', 'disgust', 'fear', 'sentiment']].to_numpy()
         
-        X_test = X_test[mode]
         test_id = np.array([int(i.split('|')[0]) for i in pd.DataFrame(y_test)['id'].to_list()]).astype(np.int64)
         y_test = pd.DataFrame(y_test)[['happy', 'sad', 'anger', 'surprise', 'disgust', 'fear', 'sentiment']].to_numpy()
         y_test = np.nan_to_num(y_test, nan=0)
         y_train = np.nan_to_num(y_train, nan=0)
-        X_train = np.nan_to_num(X_train, nan=0)
-        X_test = np.nan_to_num(X_test, nan=0)
-
-        inputs_train = torch.tensor(X_train, dtype=torch.float32).to(self.device)
-
+        
         targets_train_emo = torch.tensor([i[:-1] for i in y_train], dtype=torch.long)
         targets_train_sent = torch.tensor([i[-1] for i in y_train], dtype=torch.long)
         train_id = torch.tensor(train_id, dtype=torch.long)
         
-        inputs_test = torch.tensor(X_test, dtype=torch.float32)
         targets_test_emo = torch.tensor([i[:-1] for i in y_test], dtype=torch.long)
         targets_test_sent = torch.tensor([i[-1] for i in y_test], dtype=torch.long)
         test_id = torch.tensor(test_id, dtype=torch.long)
         
-        self.input_dim = inputs_train.shape[1:]
-        self.input_dim = torch.prod(torch.tensor(self.input_dim))
+        if mode.count('_')==0:
+            X_train = X_train[mode]
+            X_test = X_test[mode]
+            X_train = np.nan_to_num(X_train, nan=0)
+            X_test = np.nan_to_num(X_test, nan=0)
+            inputs_train = torch.tensor(X_train, dtype=torch.float32).to(self.device)
+            inputs_test = torch.tensor(X_test, dtype=torch.float32)
+            
+            self.input_dim = inputs_train.shape[1:]
+            self.input_dim = torch.prod(torch.tensor(self.input_dim))
+            
+            inputs_train = inputs_train.view(inputs_train.shape[0], self.input_dim)
+            inputs_test = inputs_test.view(inputs_test.shape[0], self.input_dim)
+            
+            train = data_utils.TensorDataset(
+                                         inputs_train.to(self.device), 
+                                         targets_train_emo.to(self.device), 
+                                         targets_train_sent.to(self.device),
+                                         train_id.to(self.device)
+                                         )
+            test = data_utils.TensorDataset(
+                                         inputs_test.to(self.device), 
+                                         targets_test_emo.to(self.device), 
+                                         targets_test_sent.to(self.device),
+                                         test_id.to(self.device)
+                                         )
+        else:
+            self.has_to_features = True
+            mode_1, mode_2 = mode.split('_')
+            self.input_dim = []
+            inputs_train_full = []
+            inputs_test_full = []
+            
+            for mode in [mode_1, mode_2]:
+                X_train_mode = X_train[mode]
+                X_test_mode = X_test[mode]
+            
+                X_train_mode = np.nan_to_num(X_train_mode, nan=0)
+                X_test_mode = np.nan_to_num(X_test_mode, nan=0)
+            
+                inputs_train = torch.tensor(X_train_mode, dtype=torch.float32).to(self.device)
+                inputs_test = torch.tensor(X_test_mode, dtype=torch.float32)
+            
+                input_dim = inputs_train.shape[1:]  # сохраняем форму одного input-а
+                flat_dim = torch.prod(torch.tensor(input_dim)).item()  # вычисляем скалярное значение
+            
+                self.input_dim.append(flat_dim)
+            
+                inputs_train_full.append(inputs_train.view(inputs_train.shape[0], int(flat_dim)))
+                inputs_test_full.append(inputs_test.view(inputs_test.shape[0], int(flat_dim)))
+            
+            # создаём TensorDataset
+            train = data_utils.TensorDataset(
+                inputs_train_full[0].to(self.device),
+                inputs_train_full[1].to(self.device),
+                targets_train_emo.to(self.device),
+                targets_train_sent.to(self.device),
+                train_id.to(self.device)
+            )
+            
+            test = data_utils.TensorDataset(
+                inputs_test_full[0].to(self.device),
+                inputs_test_full[1].to(self.device),
+                targets_test_emo.to(self.device),
+                targets_test_sent.to(self.device),
+                test_id.to(self.device)
+            )
+
         
-        inputs_train = inputs_train.view(inputs_train.shape[0], self.input_dim)
-        inputs_test = inputs_test.view(inputs_test.shape[0], self.input_dim)
         
-        train = data_utils.TensorDataset(
-                                     inputs_train.to(self.device), 
-                                     targets_train_emo.to(self.device), 
-                                     targets_train_sent.to(self.device),
-                                     train_id.to(self.device)
-                                     )
-        test = data_utils.TensorDataset(
-                                     inputs_test.to(self.device), 
-                                     targets_test_emo.to(self.device), 
-                                     targets_test_sent.to(self.device),
-                                     test_id.to(self.device)
-                                     )
         
         self.trainset = torch.utils.data.DataLoader(train, batch_size=self.batch_size, shuffle=True)
         self.testset = torch.utils.data.DataLoader(test, batch_size=self.batch_size, shuffle=False)
@@ -112,25 +158,43 @@ class model_register():
 
     def train(self, epochs=10, testing=True, count_zero=False, tensor_type='float'):
         for epoch in range(epochs):
-            
             with tqdm(self.trainset, desc=f"Epoch {epoch+1}/{epochs}", leave=True) as pbar:
-                for X, y_emo, y_sent, id_list in pbar:
-                    X, y_emo, y_sent = X, y_emo, y_sent
-                    if tensor_type == 'long':
-                        X = X.long()
-
-                    self.optimizer.zero_grad()
-                    emo_out, sent_out = self.model(X)
-                    emo_out = emo_out.view(-1, emo_out.shape[-1])
-                    y_emo = y_emo.view(-1) 
-                    loss_emo = self.loss_function(emo_out, y_emo)
-                    loss_sent = self.loss_function(sent_out, y_sent)
-                    loss = loss_emo + loss_sent
-        
-                    loss.backward()
-                    self.optimizer.step()
+                if self.has_to_features == False:
+                    for X, y_emo, y_sent, id_list in pbar:
+                        if tensor_type == 'long':
+                            X = X.long()
+    
+                        self.optimizer.zero_grad()
+                        emo_out, sent_out = self.model(X)
+                        emo_out = emo_out.view(-1, emo_out.shape[-1])
+                        y_emo = y_emo.view(-1) 
+                        loss_emo = self.loss_function(emo_out, y_emo)
+                        loss_sent = self.loss_function(sent_out, y_sent)
+                        loss = loss_emo + loss_sent
+            
+                        loss.backward()
+                        self.optimizer.step()
+                        
+                        pbar.set_postfix(loss=loss.item(), loss_emo=loss_emo.item(), loss_sent=loss_sent.item())
+                elif self.has_to_features:
+                    for X1, X2, y_emo, y_sent, id_list in pbar:
+                        if tensor_type == 'long':
+                            X1 = X1.long()
+                            X2 = X2.long()
+    
+                        self.optimizer.zero_grad()
+                        emo_out, sent_out = self.model(X1, X2)
+                        emo_out = emo_out.view(-1, emo_out.shape[-1])
+                        y_emo = y_emo.view(-1) 
+                        loss_emo = self.loss_function(emo_out, y_emo)
+                        loss_sent = self.loss_function(sent_out, y_sent)
+                        loss = loss_emo + loss_sent
+            
+                        loss.backward()
+                        self.optimizer.step()
+                        
+                        pbar.set_postfix(loss=loss.item(), loss_emo=loss_emo.item(), loss_sent=loss_sent.item())
                     
-                    pbar.set_postfix(loss=loss.item(), loss_emo=loss_emo.item(), loss_sent=loss_sent.item())
             self.scheduler.step()
             self.epoch += 1
             if testing:
@@ -149,19 +213,35 @@ class model_register():
         
         with torch.no_grad():
             with tqdm(self.testset, desc="Testing", leave=True) as pbar:
-                for X, y_emo, y_sent, id_list in pbar:
-                    X, y_emo, y_sent, id_list = X.to(self.device), y_emo.cpu(), y_sent.cpu(), id_list.cpu()
-
-                    emo_out, sent_out = self.model(X)
-                    
-                    preds_emo = torch.argmax(emo_out, dim=-1).cpu().numpy()
-                    preds_sent = torch.argmax(sent_out, dim=-1).cpu().numpy()
-                    
-                    targets_emo.extend(y_emo.numpy())
-                    targets_sent.extend(y_sent.numpy())
-                    predictions_emo.extend(preds_emo)
-                    predictions_sent.extend(preds_sent)
-                    ids_list.extend(id_list)
+                if self.has_to_features == False:
+                    for X, y_emo, y_sent, id_list in pbar:
+                        X, y_emo, y_sent, id_list = X.to(self.device), y_emo.cpu(), y_sent.cpu(), id_list.cpu()
+    
+                        emo_out, sent_out = self.model(X)
+                        
+                        preds_emo = torch.argmax(emo_out, dim=-1).cpu().numpy()
+                        preds_sent = torch.argmax(sent_out, dim=-1).cpu().numpy()
+                        
+                        targets_emo.extend(y_emo.numpy())
+                        targets_sent.extend(y_sent.numpy())
+                        predictions_emo.extend(preds_emo)
+                        predictions_sent.extend(preds_sent)
+                        ids_list.extend(id_list)
+                elif self.has_to_features:
+                    for X1, X2, y_emo, y_sent, id_list in pbar:
+                        X1, X2, y_emo, y_sent, id_list = X1.to(self.device), X2.to(self.device), y_emo.cpu(), y_sent.cpu(), id_list.cpu()
+    
+                        emo_out, sent_out = self.model(X1, X2)
+                        
+                        preds_emo = torch.argmax(emo_out, dim=-1).cpu().numpy()
+                        preds_sent = torch.argmax(sent_out, dim=-1).cpu().numpy()
+                        
+                        targets_emo.extend(y_emo.numpy())
+                        targets_sent.extend(y_sent.numpy())
+                        predictions_emo.extend(preds_emo)
+                        predictions_sent.extend(preds_sent)
+                        ids_list.extend(id_list)
+                     
     
         emos = ['happy', 'sad', 'anger', 'surprise', 'disgust', 'fear']
         predictions_per_emo = {emo: [] for emo in emos}
@@ -449,6 +529,334 @@ class classifier_v2_bert(nn.Module):
         x = x.unsqueeze(1)
         x = self.transformer_encoder(x)
         x = x.squeeze(1)
+
+        emo_out = self.fc_emo(x).view(-1, self.num_emo, self.num_emo_classes)
+        sent_out = self.fc_sent(x)
+
+        return emo_out, sent_out
+import torch
+import torch.nn as nn
+import torch.nn.functional as F
+
+class InceptionResidualBlock(nn.Module):
+    def __init__(self, in_channels, out_channels):
+        super(InceptionResidualBlock, self).__init__()
+
+        # Разделим каналы на ветви (4 ветви), остаток кинем на первую
+        branch_channels = out_channels // 5
+        residual_channels = out_channels - 4 * branch_channels
+
+        self.branch1x1 = nn.Conv2d(in_channels, branch_channels, kernel_size=1)
+
+        self.branch5x5_1 = nn.Conv2d(in_channels, 16, kernel_size=1)
+        self.branch5x5_2 = nn.Conv2d(16, branch_channels, kernel_size=5, padding=2)
+
+        self.branch3x3_1 = nn.Conv2d(in_channels, 16, kernel_size=1)
+        self.branch3x3_2 = nn.Conv2d(16, branch_channels, kernel_size=3, padding=1)
+
+        self.branch_pool = nn.Conv2d(in_channels, branch_channels, kernel_size=1)
+
+        # identity-блок выдаёт оставшиеся каналы
+        self.conv_residual = nn.Conv2d(in_channels, residual_channels, kernel_size=1)
+
+    def forward(self, x):
+        if len(x.shape) < 4:
+            b, d = x.shape
+            a, b_ = approximate_factors(d)
+            x = x.unsqueeze(1).view(b, 1, a, b_)
+
+        identity = self.conv_residual(x)
+
+        branch1 = self.branch1x1(x)
+
+        branch5x5 = self.branch5x5_1(x)
+        branch5x5 = self.branch5x5_2(branch5x5)
+
+        branch3x3 = self.branch3x3_1(x)
+        branch3x3 = self.branch3x3_2(branch3x3)
+
+        branch_pool = F.avg_pool2d(x, kernel_size=3, stride=1, padding=1)
+        branch_pool = self.branch_pool(branch_pool)
+
+        out = torch.cat([identity, branch1, branch5x5, branch3x3, branch_pool], dim=1)
+
+        return F.relu(out)
+
+
+
+class classifier_v3(nn.Module):
+    def __init__(
+        self,
+        input_dim,
+        hidden_dim=512,
+        num_emo=6,
+        num_emo_classes=4,
+        num_sent_classes=5,
+        dropout_rate=0.3
+    ):
+        super().__init__()
+        self.num_emo = num_emo
+        self.num_emo_classes = num_emo_classes
+
+        # InceptionResidualBlock assumes input of shape (B, C, H, W)
+        self.inception_res_block1 = InceptionResidualBlock(1, 64)
+        self.inception_res_block2 = InceptionResidualBlock(64, 128)
+
+        # Предполагаем, что input_dim — это число признаков, то есть ширина
+        self.flatten_dim = 128 * input_dim  # После свёрток высота = 1, каналы = 128
+
+        self.fc1 = nn.Linear(self.flatten_dim, hidden_dim)
+        self.dropout = nn.Dropout(dropout_rate)
+
+        self.fc_emo = nn.Linear(hidden_dim, num_emo * num_emo_classes)
+        self.fc_sent = nn.Linear(hidden_dim, num_sent_classes)
+
+    def forward(self, x):
+        # Ожидается вход x: (batch, input_dim)
+        batch_size = x.size(0)
+
+        # Преобразуем в (B, C=1, H=1, W=input_dim) для свёртки
+        x = x.view(batch_size, 1, 1, -1)
+
+        x = self.inception_res_block1(x)
+        x = self.inception_res_block2(x)
+
+        x = x.view(batch_size, -1)
+
+        x = F.relu(self.fc1(x))
+        x = self.dropout(x)
+
+        emo_out = self.fc_emo(x).view(-1, self.num_emo, self.num_emo_classes)
+        sent_out = self.fc_sent(x)
+
+        return emo_out, sent_out
+
+
+class classifier_v1t3(nn.Module):
+    def __init__(
+        self,
+        input_dim,
+        hidden_dim=512,
+        num_emo=6,
+        num_emo_classes=4,
+        num_sent_classes=5,
+        dropout_rate=0.3
+    ):
+        super().__init__()
+        self.num_emo = num_emo
+        self.num_emo_classes = num_emo_classes
+
+        self.inception_res_block1 = InceptionResidualBlock(1, 64)
+        self.inception_res_block2 = InceptionResidualBlock(64, 128)
+  
+        self.fc1 = nn.Linear(128 * input_dim[0], hidden_dim)
+        self.dropout1 = nn.Dropout(dropout_rate)
+        self.fc2 = nn.Linear(input_dim[1], hidden_dim)
+        self.dropout2 = nn.Dropout(dropout_rate)
+
+        self.fc_emo = nn.Linear(hidden_dim*2, num_emo * num_emo_classes)
+        self.fc_sent = nn.Linear(hidden_dim*2, num_sent_classes)
+
+    def forward(self, x1, x2):
+        # Ожидается вход x: (batch, input_dim)
+        batch_size = x1.size(0)
+
+        # Преобразуем в (B, C=1, H=1, W=input_dim) для свёртки
+        x1 = x1.view(batch_size, 1, 1, -1)
+
+        x1 = self.inception_res_block1(x1)
+        x1 = self.inception_res_block2(x1)
+
+        x1 = x1.view(batch_size, -1)
+
+        x1 = F.relu(self.fc1(x1))
+        x1 = self.dropout1(x1)
+        
+        x2 = F.relu(self.fc2(x2))
+        x2 = self.dropout2(x2)
+        x = torch.cat((x1, x2), dim=1)
+
+       
+        emo_out = self.fc_emo(x).view(-1, self.num_emo, self.num_emo_classes)
+        sent_out = self.fc_sent(x)
+
+        return emo_out, sent_out
+        
+        
+class classifier_v1t3_token(nn.Module):
+    def __init__(
+        self,
+        input_dim,
+        hidden_dim=512,
+        num_emo=6,
+        num_emo_classes=4,
+        num_sent_classes=5,
+        dropout_rate=0.3,
+        embedding_dim = 1024
+        
+    ):
+        super().__init__()
+        self.num_emo = num_emo
+        self.num_emo_classes = num_emo_classes
+        
+        self.embedding = nn.Embedding(1155, embedding_dim)
+
+        self.inception_res_block1 = InceptionResidualBlock(1, 64)
+        self.inception_res_block2 = InceptionResidualBlock(64, 128)
+  
+        self.fc1 = nn.Linear(128 * input_dim[0], hidden_dim)
+        self.dropout1 = nn.Dropout(dropout_rate)
+        self.fc2 = nn.Linear(embedding_dim, hidden_dim)
+        self.dropout2 = nn.Dropout(dropout_rate)
+
+        self.fc_emo = nn.Linear(hidden_dim*2, num_emo * num_emo_classes)
+        self.fc_sent = nn.Linear(hidden_dim*2, num_sent_classes)
+
+    def forward(self, x1, x2):
+        # Ожидается вход x: (batch, input_dim)
+        batch_size = x1.size(0)    
+
+        # Преобразуем в (B, C=1, H=1, W=input_dim) для свёртки
+        x1 = x1.view(batch_size, 1, 1, -1)
+
+        x1 = self.inception_res_block1(x1)
+        x1 = self.inception_res_block2(x1)
+
+        x1 = x1.view(batch_size, -1)
+
+        x1 = F.relu(self.fc1(x1))
+        x1 = self.dropout1(x1)
+        
+        x2 = self.embedding(x2.long())
+        x2 = x2.mean(dim=1)
+        x2 = F.relu(self.fc2(x2))
+        x2 = self.dropout2(x2)
+        x = torch.cat((x1, x2), dim=1)
+
+        emo_out = self.fc_emo(x).view(-1, self.num_emo, self.num_emo_classes)
+        sent_out = self.fc_sent(x)
+
+        return emo_out, sent_out
+
+        
+class classifier_v3t3(nn.Module):
+    def __init__(
+        self,
+        input_dim,
+        hidden_dim=512,
+        num_emo=6,
+        num_emo_classes=4,
+        num_sent_classes=5,
+        dropout_rate=0.3
+    ):
+        super().__init__()
+        self.num_emo = num_emo
+        self.num_emo_classes = num_emo_classes
+
+        # Блоки для x1
+        self.inception_res_block1_x1 = InceptionResidualBlock(1, 16)
+        self.inception_res_block2_x1 = InceptionResidualBlock(16, 32)
+
+        # Блоки для x2
+        self.inception_res_block1_x2 = InceptionResidualBlock(1, 16)
+        self.inception_res_block2_x2 = InceptionResidualBlock(16, 32)
+
+        self.fc1_x1 = nn.Linear(32 * input_dim[0], hidden_dim)
+        self.fc1_x2 = nn.Linear(32 * input_dim[1], hidden_dim)
+
+        self.dropout1 = nn.Dropout(dropout_rate)
+
+        self.fc_emo = nn.Linear(hidden_dim * 2, num_emo * num_emo_classes)
+        self.fc_sent = nn.Linear(hidden_dim * 2, num_sent_classes)
+
+    def forward(self, x1, x2):
+        batch_size = x1.size(0)
+
+        # Преобразуем входы к размерности (B, C=1, H=1, W=input_dim)
+        x1 = x1.view(batch_size, 1, 1, -1)
+        x2 = x2.view(batch_size, 1, 1, -1)
+
+        # Пропускаем через свои блоки
+        x1 = self.inception_res_block1_x1(x1)
+        x1 = self.inception_res_block2_x1(x1)
+        x1 = x1.view(batch_size, -1)
+        x1 = F.relu(self.fc1_x1(x1))
+        x1 = self.dropout1(x1)
+
+        x2 = self.inception_res_block1_x2(x2)
+        x2 = self.inception_res_block2_x2(x2)
+        x2 = x2.view(batch_size, -1)
+        x2 = F.relu(self.fc1_x2(x2))
+        x2 = self.dropout1(x2)
+
+        # Объединяем фичи
+        x = torch.cat((x1, x2), dim=1)
+
+        emo_out = self.fc_emo(x).view(-1, self.num_emo, self.num_emo_classes)
+        sent_out = self.fc_sent(x)
+
+        return emo_out, sent_out
+        
+        
+class classifier_v3t3_token(nn.Module):
+    def __init__(
+        self,
+        input_dim,
+        hidden_dim=512,
+        num_emo=6,
+        num_emo_classes=4,
+        num_sent_classes=5,
+        dropout_rate=0.3,
+        embedding_dim = 1024
+    ):
+        super().__init__()
+        self.num_emo = num_emo
+        self.num_emo_classes = num_emo_classes
+        
+        self.embedding = nn.Embedding(1155, embedding_dim)
+
+        # Блоки для x1
+        self.inception_res_block1_x1 = InceptionResidualBlock(1, 16)
+        self.inception_res_block2_x1 = InceptionResidualBlock(16, 32)
+
+        # Блоки для x2
+        self.inception_res_block1_x2 = InceptionResidualBlock(1, 16)
+        self.inception_res_block2_x2 = InceptionResidualBlock(16, 32)
+
+        self.fc1_x1 = nn.Linear(32 * input_dim[0], hidden_dim)
+        self.fc1_x2 = nn.Linear(32 * embedding_dim, hidden_dim)
+
+        self.dropout1 = nn.Dropout(dropout_rate)
+
+        self.fc_emo = nn.Linear(hidden_dim * 2, num_emo * num_emo_classes)
+        self.fc_sent = nn.Linear(hidden_dim * 2, num_sent_classes)
+
+    def forward(self, x1, x2):
+        batch_size = x1.size(0)
+
+        # Преобразуем входы к размерности (B, C=1, H=1, W=input_dim)
+        x1 = x1.view(batch_size, 1, 1, -1)
+
+        # Пропускаем через свои блоки
+        x1 = self.inception_res_block1_x1(x1)
+        x1 = self.inception_res_block2_x1(x1)
+        x1 = x1.view(batch_size, -1)
+        x1 = F.relu(self.fc1_x1(x1))
+        x1 = self.dropout1(x1)
+        
+        
+        
+        x2 = self.embedding(x2.long())
+        x2 = x2.mean(dim=1)
+        x2 = x2.view(batch_size, 1, 1, -1)
+        x2 = self.inception_res_block1_x2(x2)
+        x2 = self.inception_res_block2_x2(x2)
+        x2 = x2.view(batch_size, -1)
+        x2 = F.relu(self.fc1_x2(x2))
+        x2 = self.dropout1(x2)
+
+        # Объединяем фичи
+        x = torch.cat((x1, x2), dim=1)
 
         emo_out = self.fc_emo(x).view(-1, self.num_emo, self.num_emo_classes)
         sent_out = self.fc_sent(x)
